@@ -295,11 +295,11 @@ export class Connection{
             }
         });
     }
-    complete(answer : Answer) : void{
+    complete(answer : Answer) : Promise<void>{
         if(this.readiness.get()){
             throw "this connection is already active!";
         }
-        this.rtcPeerConnection.setRemoteDescription(new RTCSessionDescription({
+        return this.rtcPeerConnection.setRemoteDescription(new RTCSessionDescription({
             type: "answer",
             sdp: answer.sdp
         }));
