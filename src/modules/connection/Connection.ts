@@ -18,10 +18,12 @@ export class Connection{
     private readonly readiness : Observable<boolean>;
     readonly open : Promise<this>; // export as promise, but future internally
     private connectiterator = 0;
-    constructor(){
+    private onviolation : (error : string, data : string)=>void; //called when the partner engaged in a violation that closed the channel. consider banning.
+    constructor(onviolation : (error : string, data : string)=> void = (error, data)=>{}){
         this.rtcPeerConnection = new RTCPeerConnection(rtcconfig);
         this.readiness = new Observable<boolean>(false);
         this.open = new Future<this>();
+        this.onviolation = onviolation;
     }
     // createChannel<RequestT,ResponseT>(onmessage : (request :RequestT) => Promise<ResponseT>, maxOpenMessages) : (request :RequestT) => Promise<ResponseT>{
     //
@@ -43,7 +45,7 @@ export class Connection{
      * @param {number} maxOpenMessages
      * @returns {(request: RequestT) => Promise<ResponseT>} pipe your messages into this. catch for errors, hinting you may want to retransmit your packages through other routes.
      */
-    createChannel<RequestT,ResponseT>(onmessage : (request : RequestT) => Promise<ResponseT>, maxOpenMessages=100) : (request : RequestT) => Promise<ResponseT>{
+    createChannel<RequestT,ResponseT>(onmessage : RequestFunction<RequestT, ResponseT>, maxOpenMessages=100) : RequestFunction<RequestT, ResponseT>{
         let channel = this.createStringChannel(request =>{
             try{
                 return onmessage(JSON.parse(request)).
@@ -51,7 +53,7 @@ export class Connection{
             }catch(e){
                 return Promise.reject("garbled message")
             }
-        }, maxOpenMessages);
+        }, maxOpenMessages, this.onviolation);
 
         return (request)=>{
             return channel(JSON.stringify(request)).
@@ -65,14 +67,14 @@ export class Connection{
      * uses strings, because firefox has problems with generic byte arrays. although.. who cares about firefox?
      * @param {(request: string) => Promise<string>} onmessage
      * @param {number} maxOpenMessages
-     * @param {(error : string, data : string) => void} onseriousoffense callback on serious violation
+     * @param {(error : string, data : string) => void} onseriousoffense callback on serious violation that closes the channel
      * @returns {(request: string) => Promise<string>}
      */
     createStringChannel(
-        onmessage : (request : string) => Promise<string>,
+        onmessage : RequestFunction<string, string>,
         maxOpenMessages=100,
         onseriousoffense=(error : string, data : string)=>{})
-        : (request : string) => Promise<string>
+        : RequestFunction<string, string>
     {
         if(this.readiness.get()){
             throw "channels can only be created before starting the connection!"
@@ -302,13 +304,18 @@ export class Connection{
             sdp: answer.sdp
         }));
     }
+
+    close(){
+        // should propagate into bounce, etc.
+        this.rtcPeerConnection.close();
+    }
 }
 
 interface SDP{sdp: string;}
-interface Offer extends SDP{
+export interface Offer extends SDP{
 
 }
-interface Answer extends SDP{
+export interface Answer extends SDP{
 
 }
 
@@ -319,4 +326,8 @@ class ConnectionError{
         this.type = type;
         this.data = data;
     }
+}
+
+export interface RequestFunction<RequestT, ResponseT>{
+    (request :RequestT) : Promise<ResponseT>
 }
