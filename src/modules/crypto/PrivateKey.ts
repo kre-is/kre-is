@@ -62,6 +62,9 @@ export class PrivateKey {
 
         return vd;
     }
+    async getPublicKey() : Promise<PublicKey>{
+        return this.publicKey;
+    }
 }
 
 export class VerDoc<T>{
