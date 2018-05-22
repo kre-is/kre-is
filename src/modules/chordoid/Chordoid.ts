@@ -1,4 +1,4 @@
-export class Chordoid1<T>{
+export class Chordoid<T>{
     private locus : number;
     private array : {key : number, obj : T}[];
 
@@ -16,7 +16,20 @@ export class Chordoid1<T>{
 
     constructor(center : number, circumference : number = 1){
         this.locus = center;
-        this.array = new Array(Chordoid1.lookupTable.length-1).fill(null);
+        this.array = new Array(Chordoid.lookupTable.length-1).fill(null);
+    }
+
+    isDesirable(location: number){ //todo: refactor this into "add"
+        let idx = this.ltoi(location);
+        if(this.array[idx]){
+            if(this.efficiency(this.array[idx].key, idx) > this.efficiency(location, idx)){
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return true;
+        }
     }
 
     add(location: number, obj : T) : T | null{
@@ -37,6 +50,11 @@ export class Chordoid1<T>{
         }
     }
 
+    /**
+     * retrieve closest available object
+     * @param {number} location
+     * @returns {T | null}
+     */
     get(location: number) : T | null{
         let item = this.array[this.ltoi(location, true)]
         return (item || null) && item.obj;
@@ -45,7 +63,7 @@ export class Chordoid1<T>{
     remove(location: number) : T | null{
         let idx = this.ltoi(location);
         let old = this.array[idx];
-        if(!old || Math.abs(old.key - location) > Chordoid1.acceptableError){
+        if(!old || Math.abs(old.key - location) > Chordoid.acceptableError){
             return null;
         }
         this.array[idx] = null;
@@ -53,7 +71,9 @@ export class Chordoid1<T>{
     }
 
 
-
+    static dereference (idx: Exponent, locus: number) : number{
+        return (Chordoid.lookupTable[idx.valueOf()] + locus + 1 ) % 1;
+    }
     private derelativize(location : number) : number{
         console.assert(location>=0 && location <= 1, "location: "+location);
         return ((1 + location - this.locus + 0.5) % 1) - 0.5;
@@ -70,10 +90,13 @@ export class Chordoid1<T>{
             Math.abs(b - a + 1)
         );
     }
+    distance(a: number) : number{
+        return Chordoid.distance(this.locus, a);
+    }
 
     efficiency(location : number, idx : number) : number{
         let derelativized = this.derelativize(location);
-        return Chordoid1.distance(Chordoid1.lookupTable[idx], derelativized);
+        return Chordoid.distance(Chordoid.lookupTable[idx], derelativized);
     }
 
     ltoi(location : number, skipEmpty : boolean = false) : number{ //location to index
@@ -95,7 +118,7 @@ export class Chordoid1<T>{
             return veridex;
         } else {
             // start with max
-            let idx = Chordoid1.lookupTable.length-1;
+            let idx = Chordoid.lookupTable.length-1;
             while(efficiency > this.efficiency(location, idx)){
                 if(skipEmpty && !this.array[idx]){
                     idx--;
@@ -110,15 +133,32 @@ export class Chordoid1<T>{
 
     /**
      * get a sorted list of suggestions, on which addressees are most desirable, with which tolerances.
-     * @returns {{location: number; efficiency: number}[]} sorted, biggest to smallest gap.
+     * @returns {{location: number, efficiency: number, exponent: Exponent}[]} sorted, biggest to smallest gap.
      */
-    getSuggestions() : {location : number, efficiency : number}[] {
+    getSuggestions() : {location : number, efficiency : number, exponent: Exponent}[] {
+
         return this.array.map((item, idx) => {
             return {
-                efficiency: (item)? this.efficiency(item.key, idx) : Math.abs(Chordoid1.lookupTable[idx]/2),
-                location: this.rerelativize(Chordoid1.lookupTable[idx]),
+                exponent: new Exponent(idx),
+                efficiency: (item)? this.efficiency(item.key, idx) : Math.abs(Chordoid.lookupTable[idx]/2),
+                location: this.rerelativize(Chordoid.lookupTable[idx]),
             }
         }).sort((a,b)=>b.efficiency - a.efficiency);
     }
 
+    all() : T[]{
+        return this.array.filter(e => e).map(e => e.obj);
+    }
+
+}
+
+export class Exponent extends Number{
+    constructor(exponent : number){
+        if(
+            Math.abs(exponent) != exponent ||
+            exponent < 0  ||
+            exponent >= Chordoid.lookupTable.length
+        ) throw "invalid exponent";
+        super(exponent);
+    }
 }

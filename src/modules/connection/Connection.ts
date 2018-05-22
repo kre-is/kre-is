@@ -2,6 +2,8 @@ import {rtcconfig} from "./rtcconfig";
 import {utf8Decoder, utf8Encoder} from "../tools/utf8buffer";
 import {Observable} from "../tools/Observable";
 import {Future} from "../tools/Future";
+import {ConnectionError} from "./ConnectionError";
+import {Synchronicity} from "../tools/Synchronicity";
 
 export interface RTCDataChannel extends EventTarget{
     onclose: Function;
@@ -13,67 +15,39 @@ export interface RTCDataChannel extends EventTarget{
 }
 
 
+/**
+ * Represents a connection to one peer. can contain multiple channels.
+ * @property open {Promise<this>} resolves when the channels are ready
+ * @property closed [Promise<this>} resolves when the connection terminates normally. Rejects on mangled messages or overflown buffers. consider banning.
+ */
 export class Connection{
     private rtcPeerConnection : RTCPeerConnection;
     private readonly readiness : Observable<boolean>;
-    readonly open : Promise<this>; // export as promise, but future internally
+    readonly open : Promise<this>; // export as promise, but Synchronicity internally
+    private readonly allChannelsOpen : Synchronicity; // necessary because RTC is non deterministic
+    readonly closed : Promise<this>; //accept on close, reject on misbehavior
     private connectiterator = 0;
-    private onviolation : (error : string, data : string)=>void; //called when the partner engaged in a violation that closed the channel. consider banning.
-    constructor(onviolation : (error : string, data : string)=> void = (error, data)=>{}){
+
+    constructor(){
         this.rtcPeerConnection = new RTCPeerConnection(rtcconfig);
         this.readiness = new Observable<boolean>(false);
-        this.open = new Future<this>();
-        this.onviolation = onviolation;
-    }
-    // createChannel<RequestT,ResponseT>(onmessage : (request :RequestT) => Promise<ResponseT>, maxOpenMessages) : (request :RequestT) => Promise<ResponseT>{
-    //
-    //     let bufferChannel = this.createRawChannel( requestBuffer=>{
-    //         return onmessage(JSON.parse(utf8Decoder.decode(requestBuffer))).
-    //             then(responseObject => utf8Encoder.encode(JSON.stringify(responseObject)).buffer);
-    //     },maxOpenMessages);
-    //
-    //     return (request) => {
-    //         return bufferChannel(utf8Encoder.encode(JSON.stringify(request)).buffer).
-    //             then(responseBuffer => JSON.parse(utf8Decoder.decode(responseBuffer)));
-    //     }
-    // }
-
-    /**
-     * Typed version of createRawChannel
-     * Request type RequestT expects response type ResponseT. RequestT and ResponseT should be data transfer structures. All fields must support JSON stringify.
-     * @param {(request: RequestT) => Promise<ResponseT>} onmessage
-     * @param {number} maxOpenMessages
-     * @returns {(request: RequestT) => Promise<ResponseT>} pipe your messages into this. catch for errors, hinting you may want to retransmit your packages through other routes.
-     */
-    createChannel<RequestT,ResponseT>(onmessage : RequestFunction<RequestT, ResponseT>, maxOpenMessages=100) : RequestFunction<RequestT, ResponseT>{
-        let channel = this.createStringChannel(request =>{
-            try{
-                return onmessage(JSON.parse(request)).
-                then(response => JSON.stringify(response));
-            }catch(e){
-                return Promise.reject("garbled message")
-            }
-        }, maxOpenMessages, this.onviolation);
-
-        return (request)=>{
-            return channel(JSON.stringify(request)).
-            then(response => JSON.parse(response));
-        };
-
+        this.allChannelsOpen = new Synchronicity();
+        this.open = this.allChannelsOpen.then(()=>this);
+        this.closed = new Future<this>();
     }
 
     /**
+     * All data in string.
      * gives you a function you can send buffer messages into, promises a response.
      * uses strings, because firefox has problems with generic byte arrays. although.. who cares about firefox?
      * @param {(request: string) => Promise<string>} onmessage
      * @param {number} maxOpenMessages
-     * @param {(error : string, data : string) => void} onseriousoffense callback on serious violation that closes the channel
      * @returns {(request: string) => Promise<string>}
      */
-    createStringChannel(
+    createChannel(
         onmessage : RequestFunction<string, string>,
-        maxOpenMessages=100,
-        onseriousoffense=(error : string, data : string)=>{})
+        maxOpenMessages=100
+    )
         : RequestFunction<string, string>
     {
         if(this.readiness.get()){
@@ -82,13 +56,23 @@ export class Connection{
         let requestChannel = (this.rtcPeerConnection as any).createDataChannel(this.connectiterator, {negotiated: true, id: this.connectiterator++});
         let responseChannel = (this.rtcPeerConnection as any).createDataChannel(this.connectiterator, {negotiated: true, id: this.connectiterator++});
 
+        let responseOpen = new Future<RTCDataChannel>();
+        let requestOpen = new Future<RTCDataChannel>();
+
+        this.allChannelsOpen.add(responseOpen);
+        this.allChannelsOpen.add(requestOpen);
+
         let openMessages = 0;
 
         let self = this;
         requestChannel.onopen = ()=>{
             self.readiness.set(true);
             self.readiness.flush();
-            (self.open as Future<this>).resolve(self);
+            requestOpen.resolve(requestChannel);
+        };
+
+        responseChannel.onopen = () => {
+            responseOpen.resolve(responseChannel);
         };
 
         requestChannel.onmessage = (message : MessageEvent) => {
@@ -103,9 +87,21 @@ export class Connection{
                 return;
             }
 
-            onmessage(data.slice(1)).then(rawResponse => {
-                openMessages--;
-                responseChannel.send(String.fromCodePoint(reference) + rawResponse);
+            onmessage(data.slice(1))
+                .then(rawResponse => {
+                    openMessages--;
+                    try{
+                        responseChannel.send(String.fromCodePoint(reference) + rawResponse);
+                    }catch (e){
+                        responseOpen.then(_=>{ //todo: evaluate efficacy of this. this patches bug nr 1:
+                            responseChannel.send(String.fromCodePoint(reference) + rawResponse);
+                        })
+                        /*.catch(_=>{ //todo: evaluate potential patch for bug #1
+                            console.log(_);
+                            self.close();
+                        });*/
+                    }
+
             });
         };
 
@@ -136,7 +132,7 @@ export class Connection{
                 }
                 //gg
             } catch (e) {
-                onseriousoffense(e, data);
+                (self.closed as Future<this>).reject(ConnectionError.FATAL_UnexpectedResponse());
                 bounce();
                 //probably kick and ban peer
             }
@@ -163,103 +159,6 @@ export class Connection{
             return promise;
         }
 
-    }
-
-    /**
-     * @deprecated use createStringChannel instead
-     * gives you a function you can send buffer messages into, promises a response.
-     * todo: remove. currently included as reference.
-     * @param {(request: ArrayBuffer) => Promise<ArrayBuffer>} onmessage
-     * @param {number} maxOpenMessages
-     * @returns {(request: ArrayBuffer) => Promise<ArrayBuffer>} pipe your messages into this. catch for any error, foreign or domestic
-     */
-    createRawChannel(onmessage : (request : ArrayBuffer) => Promise<ArrayBuffer>, maxOpenMessages=100) : (request : ArrayBuffer) => Promise<ArrayBuffer>{
-        if(this.readiness.get()){
-            throw "channels can only be created before starting the connection!"
-        }
-
-        let requestChannel = (this.rtcPeerConnection as any).createDataChannel(this.connectiterator, {negotiated: true, id: this.connectiterator++});
-        let responseChannel = (this.rtcPeerConnection as any).createDataChannel(this.connectiterator, {negotiated: true, id: this.connectiterator++});
-
-        let openMessages = 0;
-
-        let self = this;
-        requestChannel.onopen = ()=>{
-            self.readiness.set(true);
-            self.readiness.flush();
-            (self.open as Future<this>).resolve(self);
-        };
-
-
-        requestChannel.onmessage = (message : MessageEvent) => {
-            openMessages++;
-
-            let data : Uint8Array = new Uint8Array(message.data);
-            let reference = data[0];
-
-            if(openMessages > maxOpenMessages){
-                responseChannel.send(new Uint8Array(([0,reference,2,maxOpenMessages])).buffer);
-                openMessages--;
-                return;
-            }
-
-            onmessage(data.slice(1).buffer).then(rawResponse => {
-                let response = new Uint8Array(rawResponse);
-                let crafted = new Uint8Array(response.length + 1);
-                crafted.set(response, 1);
-                crafted[0] = reference;
-
-                openMessages--;
-                responseChannel.send(crafted.buffer);
-            });
-        };
-
-        let callbackBuffer : ((response : Uint8Array)=>void)[] = new Array(maxOpenMessages).fill(null);
-
-        let bounce = () =>{
-            this.rtcPeerConnection.close();
-            callbackBuffer.filter(e => e).forEach(e => e(new Uint8Array([0,0,3])));
-        };
-
-        requestChannel.onclose = bounce; //todo: determine whether to close connection on bounce.
-        responseChannel.onclose = bounce;
-
-        responseChannel.onmessage = (message : MessageEvent) => {
-            let data : Uint8Array = new Uint8Array(message.data);
-            let reference = data[0];
-
-            try{
-                callbackBuffer[reference](data); // error handling happens in closure
-                callbackBuffer[reference] = null;
-                //gg
-            } catch (e) {
-                //todo: probably kick and ban peer. currently, just ignores the peer.
-            }
-        };
-
-        return (request : ArrayBuffer)=> {
-
-            let available = callbackBuffer.map((e, idx) => e ? null : idx).filter(e => e); // naturally excludes 0
-
-            if (!available.length) return Promise.reject("outbuffer full");
-
-            let data = new Uint8Array(request);
-            let crafted = new Uint8Array(data.length + 1);
-            crafted.set(data, 1);
-            crafted[0] = available[0];
-
-            let promise = new Promise<ArrayBuffer>((resolve, reject)=>{
-                callbackBuffer[available[0]] = response => {
-                    if(response[0]){
-                        resolve(response.slice(1).buffer);
-                    }
-                    reject("remote problem: "+response[2]);
-                };
-            });
-            requestChannel.send(crafted.buffer);
-
-            return promise;
-        }
     }
 
      offer() : Promise<Offer>{
@@ -308,8 +207,12 @@ export class Connection{
     close(){
         // should propagate into bounce, etc.
         this.rtcPeerConnection.close();
+        (this.closed as Future<this>).resolve(this);
     }
 }
+
+
+
 
 interface SDP{sdp: string;}
 export interface Offer extends SDP{
@@ -318,16 +221,6 @@ export interface Offer extends SDP{
 export interface Answer extends SDP{
 
 }
-
-class ConnectionError{
-    type: number;
-    data: string;
-    constructor(type : number, data ?: string){
-        this.type = type;
-        this.data = data;
-    }
-}
-
 export interface RequestFunction<RequestT, ResponseT>{
     (request :RequestT) : Promise<ResponseT>
 }

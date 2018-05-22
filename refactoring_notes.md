@@ -4,3 +4,7 @@
  
  ## connection
  * disable create channel after connection has opened
+ * turn createconnection into decorator, maybe?
+ 
+ ## chordioid
+ * consider adding more explicit types

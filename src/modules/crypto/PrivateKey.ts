@@ -5,6 +5,7 @@ export class PrivateKey {
     private readonly ready : PromiseLike<any>;
     private privateKey : CryptoKey;
     private publicKey : PublicKey;
+    readonly version = 2;
     constructor(){
         this.publicKey = null;
 
@@ -30,83 +31,83 @@ export class PrivateKey {
     }
     async sign<T>(obj : T) : Promise<VerDoc<T>> {
         await this.ready;
-        let databuffer = utf8Encoder.encode(JSON.stringify(obj));
-        let pukbuffer = utf8Encoder.encode(this.publicKey.toJSON());
-        let header = new Uint8Array(new Uint16Array([databuffer.length, pukbuffer.length]).buffer);
+        let data = JSON.stringify(obj);
+        let puk = this.publicKey.toJSON();
+        let header = String.fromCodePoint(this.version, puk.length, data.length);
+        let signable = utf8Encoder.encode(header+puk+data);
 
-        let signable = new Uint8Array(1 + header.length + databuffer.length + pukbuffer.length);
-
-        signable[0] = 1; //version 1
-        signable.set(header, 1);
-        signable.set(databuffer, 1 + header.length);
-        signable.set(pukbuffer, 1 + header.length + databuffer.length);
-
-        let sigbuffer = new Uint8Array(await window.crypto.subtle.sign(
+        let sigbuffer = await window.crypto.subtle.sign(
             {
                 name: "ECDSA",
                 hash: {name: "SHA-384"},
             },
             this.privateKey,
             signable
-        ));
+        );
 
-        let product = new Uint8Array(signable.length + sigbuffer.byteLength);
-        product.set(signable, 0);
-        product.set(sigbuffer, signable.length);
+        let checksm = utf8Encoder.encode(header+puk+data).reduce((a,c,i)=>a+c*i,0);
+        let uft =  new Uint8Array(sigbuffer);
+        let chec2 = new Uint8Array(sigbuffer).reduce((a,c,i)=>a+c*i,0);
 
         let vd = new VerDoc<T>();
-        vd.original = product.buffer;
+        vd.original = header+puk+data+String.fromCodePoint(...new Uint8Array(sigbuffer));
         vd.key = this.publicKey;
         vd.data = obj;
-        vd.signature = sigbuffer.buffer;
+        vd.signature = JSON.stringify(new Uint8Array(sigbuffer));
+
+        let ku = utf8Encoder.encode(vd.original);
+
 
         return vd;
     }
-    async getPublicKey() : Promise<PublicKey>{
-        return this.publicKey;
-    }
 }
 
-export class VerDoc<T>{
+/**
+ * VerDoc DAO
+ */
+export class RawDoc<T>{
+    original : string;
+}
+
+
+export class VerDoc<T> extends RawDoc<T>{
     data: T;
     key: PublicKey;
-    signature: ArrayBuffer;
-    original: ArrayBuffer;
-    static async reconstruct<T>(buffer : ArrayBuffer) : Promise<VerDoc<T>>{
-        let inbuffer = new Uint8Array(buffer);
+    signature: string;
+    static async reconstruct<T>(rawDoc : RawDoc<T>) : Promise<VerDoc<T>>{
+        let version = rawDoc.original.codePointAt(0);
 
-        switch (inbuffer[0]){
-            case 1: {
-                let lengths = new Uint16Array(inbuffer.slice(1, 5).buffer);
-                let datalength = lengths[0];
-                let puklength = lengths[1];
+        switch (version){
+            case 2: {
+                let header = rawDoc.original.substring(0,3);
+                let puk = rawDoc.original.substr(3, rawDoc.original.codePointAt(1));
+                let data = rawDoc.original.substr(3 + rawDoc.original.codePointAt(1), rawDoc.original.codePointAt(2));
+                let sig = rawDoc.original.substr(3 + rawDoc.original.codePointAt(1) + rawDoc.original.codePointAt(2));
 
-                let predata = utf8Decoder.decode(inbuffer);
-
-                let doc = inbuffer.slice(0, 1 + 4 + datalength + puklength);
-                let sig = inbuffer.slice(1 + 4 + datalength + puklength);
                 let key = await new PublicKey(
                     JSON.parse(
-                        utf8Decoder.decode(
-                            doc.slice(1 + 4 + datalength)
-                        )
+                        puk
                     )
                 ).ready;
 
+                let checksm = utf8Encoder.encode(header+puk+data).reduce((a,c,i)=>a+c*i,0);
+                let uft =  utf8Encoder.encode(sig);
+                let chec2 = utf8Encoder.encode(sig).reduce((a,c,i)=>a+c*i,0);
+
                 if(
-                    await key.verify(doc, sig)
+                    await key.verify(utf8Encoder.encode(header+puk+data), new Uint8Array(sig.split('').map(c => c.codePointAt(0))))
                 ){
                     let vd = new VerDoc<T>();
-                    vd.signature = sig.buffer;
+                    vd.signature = sig;
                     vd.key = key;
-                    vd.data = JSON.parse(utf8Decoder.decode(doc.slice(1 + 4, 1 + 4 + datalength)));
-                    vd.original = buffer;
+                    vd.data = JSON.parse(data);
+                    vd.original = rawDoc.original;
                     return vd;
                 }
 
                 return Promise.reject("bad document");
             }
-            default: return Promise.reject("version unsupported: "+inbuffer[0]);
+            default: return Promise.reject("version unsupported: "+version);
         }
     }
 }

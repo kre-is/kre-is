@@ -5,6 +5,7 @@
 export class Future<T> extends Promise<T>{
     readonly resolve : (value : PromiseLike<T> | T) => void;
     readonly reject : (reason ?: any) => void;
+    protected state : 0 | 1 | 2; //pending, resolved, rejected;
 
     constructor(executor ?: (
         resolve : (value : PromiseLike<T> | T) => void,
@@ -14,12 +15,15 @@ export class Future<T> extends Promise<T>{
 
         super((resolve, reject) => {
             resolver = (resolution : T) => {
+                this.state = 1;
                 resolve(resolution);
             };
             rejector = (rejection : any) => {
+                this.state = 2;
                 reject(rejection);
             };
         });
+        this.state = 0;
 
         this.resolve = resolver;
         this.reject = rejector;

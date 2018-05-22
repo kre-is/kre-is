@@ -1,4 +1,4 @@
-#Self-Signed Key Exchange Protocol
+#(obsolete)Self-Signed Key Exchange Protocol
 ##Bytes
  * 0: version, 8 bit uint
 
@@ -11,5 +11,14 @@
  * 1: public key in utf-8 encoded JWK as buffer
  * 2: signature: the remaining bytes in the buffer are expected to be the sig.
  
- 
+###Version 2: *CodePoints, not Bytes*
+  * 0: version (backwards compatible with v1)
+  
+####Header cont: 2 more Pts
+ * 1: length of data in Pts
+ * 2: length of PuK in Pts
+####Data:
+ * public key. substr 3, H[1]
+ * data. substr 3+H[1], H[2]
+ * signature. substr 3+H[1]+H[2]
 

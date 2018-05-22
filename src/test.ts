@@ -1,7 +1,9 @@
 import {Test} from "./modules/test/Test";
-import {Chordoid1} from "./modules/chordoid/Chordoid1";
+import {Chordoid} from "./modules/chordoid/Chordoid";
 import {PrivateKey, VerDoc} from "./modules/crypto/PrivateKey";
 import {Connection} from "./modules/connection/Connection";
+import {TypedConnection} from "./modules/connection/TypedConnection";
+import {KreisInternal} from "./modules/kreis/KreisInternal";
 let printf = (str : string) => {
     var h = document.createElement("div");
     var t = document.createTextNode(str);
@@ -12,21 +14,21 @@ let printf = (str : string) => {
 (async ()=>{
     let ct = new Test("Chord", printf);
 
-    ct.assert("distance diff<1e-16", Chordoid1.distance(0.9, 0.1), 0.2, (a, b) => Math.abs(a - b) < 1e-16);
-    ct.assert("distance diff<1e-16", Chordoid1.distance(0.1, 0.1), 0.0, (a, b) => Math.abs(a - b) < 1e-16);
-    ct.assert("distance diff<1e-16", Chordoid1.distance(0.4, 0.5), 0.1, (a, b) => Math.abs(a - b) < 1e-16);
-    ct.assert("distance diff<1e-16", Chordoid1.distance(0, 1), 0.0, (a, b) => Math.abs(a - b) < 1e-16);
-    ct.assert("distance diff<1e-16", Chordoid1.distance(0.1, 0.9), 0.2, (a, b) => Math.abs(a - b) < 1e-16);
-    ct.assert("distance diff<1e-16", Chordoid1.distance(1, 0), 0.0, (a, b) => Math.abs(a - b) < 1e-16);
+    ct.assert("distance diff<1e-16", Chordoid.distance(0.9, 0.1), 0.2, (a, b) => Math.abs(a - b) < 1e-16);
+    ct.assert("distance diff<1e-16", Chordoid.distance(0.1, 0.1), 0.0, (a, b) => Math.abs(a - b) < 1e-16);
+    ct.assert("distance diff<1e-16", Chordoid.distance(0.4, 0.5), 0.1, (a, b) => Math.abs(a - b) < 1e-16);
+    ct.assert("distance diff<1e-16", Chordoid.distance(0, 1), 0.0, (a, b) => Math.abs(a - b) < 1e-16);
+    ct.assert("distance diff<1e-16", Chordoid.distance(0.1, 0.9), 0.2, (a, b) => Math.abs(a - b) < 1e-16);
+    ct.assert("distance diff<1e-16", Chordoid.distance(1, 0), 0.0, (a, b) => Math.abs(a - b) < 1e-16);
 
-    let ti = new Chordoid1(0.5, 1);
+    let ti = new Chordoid(0.5, 1);
     ct.assert("indicer", ti.ltoi(0), 0);
     ct.assert("indicer", ti.ltoi(1), 0);
     ct.assert("indicer", ti.ltoi(0.49999), 6);
     ct.assert("indicer", ti.ltoi(0.5), 14);
     ct.assert("indicer", ti.ltoi(0.50001), 22);
 
-    let ti2 = new Chordoid1(0.75, 1);
+    let ti2 = new Chordoid(0.75, 1);
     ct.assert("indicer 2", ti2.ltoi(0.25), 0);
     ct.assert("indicer 2", ti2.ltoi(0.74999), 6);
     ct.assert("indicer 2", ti2.ltoi(0.75), 14);
@@ -58,7 +60,7 @@ let printf = (str : string) => {
 
     let prk = new PrivateKey();
     let verdoc = await prk.sign(to);
-    let reconstructed = await VerDoc.reconstruct(verdoc.original);
+    let reconstructed = await VerDoc.reconstruct(verdoc);
 
     cr.assert("verdoc key comparison", verdoc.key.hashed(), reconstructed.key.hashed());
     cr.assert("verdoc data comparison", JSON.stringify(verdoc.data), JSON.stringify(reconstructed.data));
@@ -79,9 +81,9 @@ let printf = (str : string) => {
     let response = ( m : A ) : Promise<B> => {return Promise.resolve({b: m.a})};
 
 
-    let a = new Connection();
+    let a = new TypedConnection();
     let ac = a.createChannel<A,B>(response);
-    let b = new Connection();
+    let b = new TypedConnection();
     let bc = b.createChannel<A,B>(response);
 
     let offer = await a.offer();
@@ -96,6 +98,25 @@ let printf = (str : string) => {
     cn.run();
 })(); // connection test
 
+(async ()=>{
+    let cn = new Test("KreisInternal", printf);
+
+    let k = new Array(20).fill(null).map(_=> new KreisInternal());
+    let kn = new KreisInternal();
+
+    k.reduce((a,e)=>{(async ()=>e.complete(await a.answer(await e.offer(-1))))(); return e}, kn);
+    //k[0].complete(await k[1].answer(await k[0].offer(-1)));
+
+    await k[0].open;
+
+    k[0].shout("eyy");
+    k[0].sync();
+
+    cn.assert("kreis sync works", (await k[0].sync()).length, 1);
+
+    cn.run();
+
+})(); // kreis test
 
 
 
