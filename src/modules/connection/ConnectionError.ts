@@ -6,42 +6,41 @@ export class ConnectionError{
     data: string;
     reference: number;
     local: boolean;
-    constructor(type : number, data ?: string, reference = 0, local = true){
+    constructor(type : number, reference : number){
         this.type = type;
-        this.data = data;
         this.reference = reference;
-        this.local = local;
     }
-    static RETRANSMIT_LocalBufferExhausted(): ConnectionError{
-        return new ConnectionError(1);
+    static InbufferExhausted(): ConnectionError{
+        return new ConnectionError(1, null);
     }
-    static FATAL_RemoteBufferExhausted(): ConnectionError{
-        return new ConnectionError(2);
+    static OutbufferExhausted(): ConnectionError{
+        return new ConnectionError(2, null);
     }
-    static ERROR_ParticipantUnreachable(): ConnectionError{
-        return new ConnectionError(3);
+    static ParticipantUnreachable(): ConnectionError{
+        return new ConnectionError(3, null);
     }
-    static FATAL_ReceivedGarbage(data : string): ConnectionError{
-        return new ConnectionError(4, data);
+    static ReceivedGarbage(): ConnectionError{
+        return new ConnectionError(4, null);
     }
-    static FATAL_UnexpectedResponse(): ConnectionError{
-        return new ConnectionError(5);
+    static UnexpectedResponse(): ConnectionError{
+        return new ConnectionError(5, null);
     }
-    static RETRANSMIT_NetworkEmpty(): ConnectionError{
-        return new ConnectionError(6);
+    static NetworkEmpty(): ConnectionError{
+        return new ConnectionError(6, null);
+    }
+    static UncaughtRemoteError(): ConnectionError{
+        return new ConnectionError(7, null);
+    }
+    static Bounced(): ConnectionError{ // the connection closed unexpectedly.
+        return new ConnectionError(8, null);
     }
 
-    transmit(): string{
-        return String.fromCodePoint(0,this.reference, this.type) + this.data;
+
+    transmit(reference : number): string{
+        return String.fromCodePoint(0, this.type);
     }
     static parse(data: string): ConnectionError{
-        try{
-            //remote source
-            return new ConnectionError(data.codePointAt(1), data.slice(3), data.codePointAt(2), false);
-        } catch (e) {
-            return ConnectionError.FATAL_ReceivedGarbage(data);
-        }
-
+        return new ConnectionError(data.codePointAt(2), data.codePointAt(1))
     }
 }
 

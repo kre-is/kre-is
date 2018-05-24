@@ -16,7 +16,7 @@ export class TypedConnection extends Connection{
                 return onmessage(JSON.parse(request)).
                 then(response => JSON.stringify(response));
             }catch(e){
-                return Promise.reject(ConnectionError.FATAL_ReceivedGarbage(request));
+                return Promise.reject(ConnectionError.ReceivedGarbage());
             }
         }, maxOpenMessages);
 

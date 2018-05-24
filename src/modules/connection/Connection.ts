@@ -1,6 +1,4 @@
 import {rtcconfig} from "./rtcconfig";
-import {utf8Decoder, utf8Encoder} from "../tools/utf8buffer";
-import {Observable} from "../tools/Observable";
 import {Future} from "../tools/Future";
 import {ConnectionError} from "./ConnectionError";
 import {Synchronicity} from "../tools/Synchronicity";
@@ -22,15 +20,14 @@ export interface RTCDataChannel extends EventTarget{
  */
 export class Connection{
     private rtcPeerConnection : RTCPeerConnection;
-    private readonly readiness : Observable<boolean>;
     readonly open : Promise<this>; // export as promise, but Synchronicity internally
     private readonly allChannelsOpen : Synchronicity; // necessary because RTC is non deterministic
     readonly closed : Promise<this>; //accept on close, reject on misbehavior
-    private connectiterator = 0;
+
+    private connectionIterator = 0; //give a unique name to the channels.
 
     constructor(){
         this.rtcPeerConnection = new RTCPeerConnection(rtcconfig);
-        this.readiness = new Observable<boolean>(false);
         this.allChannelsOpen = new Synchronicity();
         this.open = this.allChannelsOpen.then(()=>this);
         this.closed = new Future<this>();
@@ -50,62 +47,91 @@ export class Connection{
     )
         : RequestFunction<string, string>
     {
-        if(this.readiness.get()){
+        if(this.allChannelsOpen.getState() != "pending"){
             throw "channels can only be created before starting the connection!"
         }
-        let requestChannel = (this.rtcPeerConnection as any).createDataChannel(this.connectiterator, {negotiated: true, id: this.connectiterator++});
-        let responseChannel = (this.rtcPeerConnection as any).createDataChannel(this.connectiterator, {negotiated: true, id: this.connectiterator++});
 
-        let responseOpen = new Future<RTCDataChannel>();
-        let requestOpen = new Future<RTCDataChannel>();
+        let requestChannel = (this.rtcPeerConnection as any).createDataChannel(this.connectionIterator, {negotiated: true, id: this.connectionIterator++});
+        let responseChannel = (this.rtcPeerConnection as any).createDataChannel(this.connectionIterator, {negotiated: true, id: this.connectionIterator++});
 
-        this.allChannelsOpen.add(responseOpen);
-        this.allChannelsOpen.add(requestOpen);
+        let responseChannelOpen = new Future<RTCDataChannel>();
+        let requestChannelOpen = new Future<RTCDataChannel>();
 
-        let openMessages = 0;
+        this.allChannelsOpen.add(responseChannelOpen);
+        this.allChannelsOpen.add(requestChannelOpen);
 
+        let openRequests = 0;
+
+
+        // Ensure all channels are open
         let self = this;
         requestChannel.onopen = ()=>{
-            self.readiness.set(true);
-            self.readiness.flush();
-            requestOpen.resolve(requestChannel);
+            requestChannelOpen.resolve(requestChannel);
         };
-
         responseChannel.onopen = () => {
-            responseOpen.resolve(responseChannel);
+            responseChannelOpen.resolve(responseChannel);
         };
 
+        //handle the sending of a responseMessage. is altered by bounce.
+        let responseDispatch = (message : string) => {
+            responseChannel.send(message);
+            openRequests--;
+        };
+
+        // handle FOREIGN REQUESTS
+        // a request is coming in.
         requestChannel.onmessage = (message : MessageEvent) => {
-            openMessages++;
+            openRequests++;
 
             let data : string = message.data;
             let reference = data.codePointAt(0);
 
-            if(openMessages > maxOpenMessages){
-                responseChannel.send(String.fromCodePoint(0,reference,2,maxOpenMessages));
-                openMessages--;
+            //anti DOS
+            //partner tries to flood us
+            if(openRequests > maxOpenMessages){
+                try{
+                    responseChannel.send(ConnectionError.InbufferExhausted().transmit(0));
+                } catch (e){
+                    //don't care if they don't receive it, they're criminal
+                }
+                //todo: implement IP ban
+                console.log("dropped spamming peer");
+                (self.closed as Future<this>).reject(self);
+                self.close();
                 return;
             }
 
-            onmessage(data.slice(1))
-                .then(rawResponse => {
-                    openMessages--;
-                    try{
-                        responseChannel.send(String.fromCodePoint(reference) + rawResponse);
-                    }catch (e){
-                        responseOpen.then(_=>{ //todo: evaluate efficacy of this. this patches bug nr 1:
-                            responseChannel.send(String.fromCodePoint(reference) + rawResponse);
-                        })
-                        /*.catch(_=>{ //todo: evaluate potential patch for bug #1
-                            console.log(_);
-                            self.close();
-                        });*/
-                    }
+            //perform onmessage
+            onmessage(data.slice(1)) // first symbol is reference
+                .then(response => {
+                    if((self.closed as Future<this>).getState() != "pending")
+                        return; // do not transmit.
 
+                    responseChannelOpen.then(()=> {
+                        responseDispatch(String.fromCodePoint(reference) + response);
+                    })
+                })
+                .catch( error => {
+                    if((self.closed as Future<this>).getState() != "pending")
+                        return; // do not transmit.
+
+                    let transmissible;
+                    try {
+                        transmissible = error.transmit(reference);
+                    }catch(e){
+                        transmissible = ConnectionError.UncaughtRemoteError().transmit(reference);
+                    }
+                    responseChannelOpen.then(()=> {
+                        responseDispatch(transmissible);
+                    });
             });
         };
 
-        let callbackBuffer : ((response : string)=>void)[] = new Array(maxOpenMessages).fill(null);
+        // handle REQUEST DISPATCHING
+        //store outgoing message futures here
+        let callbackBuffer : Future<string>[] = new Array(maxOpenMessages).fill(null);
+
+        let sentRequests = 0;
 
         /**
          * bounce all messages in the buffer
@@ -113,56 +139,67 @@ export class Connection{
          * another layer should determine what to do with that.
          */
         let bounce = () =>{
-            this.rtcPeerConnection.close();
-            callbackBuffer.filter(e => e).forEach(e => e(String.fromCodePoint(0,0,3)));
+            self.rtcPeerConnection.close();
+            responseDispatch = ()=>{}; // any responses get simply dropped.
+            (self.closed as Future<this>).resolve(self);
+            callbackBuffer.filter(e => e).forEach(e => e.reject(ConnectionError.Bounced()));
+            self.close();
         };
 
-        requestChannel.onclose = bounce; //todo: determine whether to close connection on bounce.
+        requestChannel.onclose = bounce;
         responseChannel.onclose = bounce;
 
+        //resolve and clear the parked futures on response
         responseChannel.onmessage = (message : MessageEvent) => {
             let data : string = message.data;
             let reference = data.codePointAt(0);
 
-            try{
+            if(reference == 0){ // an error occurred remotely!
+                let err = ConnectionError.parse(data);
+                reference = err.reference;
                 try{
-                    callbackBuffer[reference](data); // remote handling happens in closure
-                }catch(e){
-                    callbackBuffer[reference](String.fromCodePoint(0,0,4) + data)
+                    callbackBuffer[reference].reject(err);
+                    callbackBuffer[reference] = null;
+                    sentRequests--;
+                } catch (e) {
+                    //@todo: implement ip banning
+                    (self.closed as Future<this>).reject(self);
+                    bounce();
                 }
-                //gg
-            } catch (e) {
-                (self.closed as Future<this>).reject(ConnectionError.FATAL_UnexpectedResponse());
-                bounce();
-                //probably kick and ban peer
+                return;
             }
+
+            callbackBuffer[reference].resolve(data.slice(1));
             callbackBuffer[reference] = null;
+            sentRequests--;
+            return;
         };
 
+        // actually DISPATCH REQUESTS
         return (request : string)=> {
+            sentRequests++;
 
-            let available = callbackBuffer.map((e, idx) => e ? null : idx).filter(e => e); // naturally excludes 0
+            //we don't want to spam our partner, otherwise they drop us.
+            if(sentRequests > maxOpenMessages){
+                sentRequests--;
+                return Promise.reject(ConnectionError.OutbufferExhausted());
+            }
 
-            if (!available.length) return Promise.reject("outbuffer full");
+            // find a space in the callbackBuffer
+            let idx = callbackBuffer.indexOf(null, 1); // exclude spot 0, for errors n stuff
 
-            let crafted : string = String.fromCodePoint(available[0]) + request;
+            let future = new Future<string>();
 
-            let promise = new Promise<string>((resolve, reject)=>{
-                callbackBuffer[available[0]] = response => {
-                    if(response.codePointAt(0)){
-                        resolve(response.slice(1));
-                    }
-                    reject(new ConnectionError(response.codePointAt(2), response.slice(3)));
-                };
-            });
-            requestChannel.send(crafted);
-            return promise;
-        }
+            callbackBuffer[idx] = future;
+
+            requestChannel.send(String.fromCodePoint(idx) + request);
+            return future;
+        };
 
     }
 
      offer() : Promise<Offer>{
-        if(this.readiness.get()){
+        if(this.allChannelsOpen.getState() != "pending"){
             throw "this connection is already active!";
         }
         this.rtcPeerConnection.createOffer().then(description => {
@@ -177,7 +214,7 @@ export class Connection{
         });
     }
     answer(offer : Offer) : Promise<Answer>{
-        if(this.readiness.get()){
+        if(this.allChannelsOpen.getState() != "pending"){
             throw "this connection is already active!";
         }
         this.rtcPeerConnection.setRemoteDescription(new RTCSessionDescription({
@@ -195,7 +232,7 @@ export class Connection{
         });
     }
     complete(answer : Answer) : Promise<void>{
-        if(this.readiness.get()){
+        if(this.allChannelsOpen.getState() != "pending"){
             throw "this connection is already active!";
         }
         return this.rtcPeerConnection.setRemoteDescription(new RTCSessionDescription({

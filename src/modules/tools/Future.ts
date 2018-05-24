@@ -30,4 +30,12 @@ export class Future<T> extends Promise<T>{
 
         executor && new Promise<T>(executor).then(resolver).catch(rejector);
     }
+
+    getState() : "pending" | "resolved" | "rejected" | "error" {
+        return (this.state == 0)? "pending"
+            : (this.state == 1) ? "resolved"
+            : (this.state == 2) ? "rejected"
+            : "error";
+    }
+
 }
