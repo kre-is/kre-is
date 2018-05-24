@@ -180,7 +180,7 @@ export class Connection{
             sentRequests++;
 
             //we don't want to spam our partner, otherwise they drop us.
-            if(sentRequests > maxOpenMessages){
+            if(sentRequests >= maxOpenMessages){
                 sentRequests--;
                 return Promise.reject(ConnectionError.OutbufferExhausted());
             }
