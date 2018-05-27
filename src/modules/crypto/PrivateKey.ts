@@ -60,6 +60,11 @@ export class PrivateKey {
 
         return vd;
     }
+    async getPublicHash() : Promise<number>{
+        await this.ready;
+        await this.publicKey.ready;
+        return this.publicKey.hashed();
+    }
 }
 
 /**

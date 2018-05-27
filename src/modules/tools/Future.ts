@@ -6,24 +6,27 @@ export class Future<T> extends Promise<T>{
     readonly resolve : (value : PromiseLike<T> | T) => void;
     readonly reject : (reason ?: any) => void;
     protected state : 0 | 1 | 2; //pending, resolved, rejected;
+    private stateExtractor;
 
     constructor(executor ?: (
         resolve : (value : PromiseLike<T> | T) => void,
         reject : (reason ?: any) => void)=>void
     ){
         let resolver, rejector;
-
+        let state : 0 | 1 | 2 = 0;
         super((resolve, reject) => {
             resolver = (resolution : T) => {
-                this.state = 1;
+                state = 1;
                 resolve(resolution);
             };
             rejector = (rejection : any) => {
-                this.state = 2;
+                state = 2;
                 reject(rejection);
             };
         });
-        this.state = 0;
+        this.stateExtractor = () => { // this is necessary because self cannot be set in super;
+            return state;
+        };
 
         this.resolve = resolver;
         this.reject = rejector;
@@ -32,9 +35,9 @@ export class Future<T> extends Promise<T>{
     }
 
     getState() : "pending" | "resolved" | "rejected" | "error" {
-        return (this.state == 0)? "pending"
-            : (this.state == 1) ? "resolved"
-            : (this.state == 2) ? "rejected"
+        return (this.stateExtractor() == 0)? "pending"
+            : (this.stateExtractor() == 1) ? "resolved"
+            : (this.stateExtractor() == 2) ? "rejected"
             : "error";
     }
 

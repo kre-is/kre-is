@@ -97,7 +97,7 @@ export class Connection{
                 //todo: implement IP ban
                 console.log("dropped spamming peer");
                 (self.closed as Future<this>).reject(self);
-                self.close();
+                try{self.close();}catch(e){};
                 return;
             }
 

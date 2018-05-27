@@ -1,5 +1,7 @@
-#Connection
+#[DEPRECATED] Connection
 All or nothing: when one channel fails, the entire connection breaks down. 
+
+Updated Note: see connection, connectionerror implementation.
 
 #StringChannel
 ##characters
@@ -9,15 +11,15 @@ All or nothing: when one channel fails, the entire connection breaks down.
 ##except if \[0\] == 0
  then we have an error response
  * \[0\]: 0
- * \[1\]: reference id
- * \[2\]: error type
+ * \[1\]: error type
+ * \[2\]: reference id
  * ?\[3..\]additional info, depending on error type.
  
  only a response can be an error. a request with reference ID 0 is not defined.
  
 ## Reference ID 
-the first byte of the request is sent back as the first byte of the response, to which the actual data is appended.
-this means that there can be a theoretical maximum of 255 concurrent unresolved requests at a time.
+the first ~~byte~~ codepoint of the request is sent back as the first byte of the response, to which the actual data is appended.
+this means that there can be a theoretical maximum of ~~255~~ ~2^100 concurrent unresolved requests at a time.
 
 ## Error Codes
  * 1: local max buffer exhausted. next byte defines the number of max connections.

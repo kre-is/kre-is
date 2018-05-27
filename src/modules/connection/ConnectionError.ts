@@ -1,14 +1,17 @@
 /**
+ * BEFORE EXTENDING: @see Errors.md
+ * @property type {number} type of error. Name and annotate the factories, so they can be identified
  * @property local {boolean} whether the error originated locally or remotely
  */
 export class ConnectionError{
     type: number;
     data: string;
     reference: number;
-    local: boolean;
-    constructor(type : number, reference : number){
+    local: boolean; // local or remote
+    constructor(type : number, reference : number, local = true){
         this.type = type;
         this.reference = reference;
+        this.local = local;
     }
     static InbufferExhausted(): ConnectionError{
         return new ConnectionError(1, null);
@@ -37,10 +40,10 @@ export class ConnectionError{
 
 
     transmit(reference : number): string{
-        return String.fromCodePoint(0, this.type);
+        return String.fromCodePoint(0, this.type, reference);
     }
     static parse(data: string): ConnectionError{
-        return new ConnectionError(data.codePointAt(2), data.codePointAt(1))
+        return new ConnectionError(data.codePointAt(1), data.codePointAt(2), false);
     }
 }
 

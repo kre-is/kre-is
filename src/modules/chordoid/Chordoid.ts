@@ -56,8 +56,14 @@ export class Chordoid<T>{
      * @returns {T | null}
      */
     get(location: number) : T | null{
-        let item = this.array[this.ltoi(location, true)]
+        let item = this.array[this.ltoi(location, true)];
         return (item || null) && item.obj;
+    }
+    getWithin(location: number, tolerance: number) : T | null {
+        let item = this.array[this.ltoi(location, true)];
+        return (item && Chordoid.distance(item.key , location) < tolerance)
+            ? item.obj
+            : null;
     }
 
     remove(location: number) : T | null{

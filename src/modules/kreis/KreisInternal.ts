@@ -5,6 +5,7 @@ import {TypedConnection} from "../connection/TypedConnection";
 import {Future} from "../tools/Future";
 import {ConnectionError} from "../connection/ConnectionError";
 import {Time} from "../tools/Time";
+import {KID} from "./daemons/KID";
 
 /**
  * @property {Promise<KreisInternal>} open - fires when the structure is connected to at least one peer, returns this instance
@@ -18,6 +19,7 @@ export class KreisInternal{
     readonly open: Promise<this>;
     private opener: ()=>void; // resolves "opens";
     private operative: Future<this>; // when the datastructure is ready;
+    private daemon : KID;
     constructor(){
         this.privateKey = new PrivateKey();
         this.operative = new Future<this>();
@@ -32,6 +34,9 @@ export class KreisInternal{
         this.open = new Promise(resolve => {
             this.opener = ()=>{resolve()};
         }).then(()=>this);
+
+        this.daemon = new KID(this);
+        this.open.then(self=>self.daemon.run());
     }
 
     private async handleOffer(offer : VerDoc<KreisOffer>) : Promise<RawDoc<KreisAnswer>>{
@@ -49,7 +54,7 @@ export class KreisInternal{
             try{
                 return this.structure.get(targetAddress).propagateOffer(offer);
             }catch (e) {
-                return Promise.reject(ConnectionError.RETRANSMIT_NetworkEmpty())
+                return Promise.reject(ConnectionError.NetworkEmpty())
             }
         }
     }
