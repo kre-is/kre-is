@@ -1,9 +1,8 @@
 export class Chordoid<T>{
     private locus : number;
-    private array : {key : number, obj : T}[];
+    protected array : {key : number, obj : T}[];
 
     //FIXME: amp up precision to 64 bit;
-
     static readonly lookupTable = [-0.5, -0.25, -0.05555555555555558, -0.0078125, -0.0008000000000000229, -0.0000643004115226109,
         -0.0000042499298761322635, -2.384185791015625e-7, -1.1615286565902494e-8, -4.999999858590343e-10,
         -1.9277190954625212e-11, -6.729616863765386e-13, -2.148281552649678e-14, -6.106226635438361e-16, 0,
@@ -11,7 +10,6 @@ export class Chordoid<T>{
         4.999999858590343e-10, 1.1615286565902494e-8, 2.384185791015625e-7, 0.0000042499298761322635,
         0.0000643004115226109, 0.0008000000000000229, 0.0078125, 0.05555555555555558, 0.25, 0.5];
     static readonly locusIDX = 14; // position of the locus
-
     static acceptableError = 1e-16;
 
     constructor(center : number, circumference : number = 1){
