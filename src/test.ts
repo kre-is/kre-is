@@ -5,10 +5,12 @@ import {TransmissionControl} from "./modules/transmissioncontrol/TransmissionCon
 import {Chordoid} from "./modules/network/arctable/Chordioid";
 import {Arctable} from "./modules/network/arctable/Arctable";
 import {NetworkAddress} from "./modules/network/NetworkAddress";
-import {Network} from "./modules/network/Network";
+import {NetworkInternal} from "./modules/network/NetworkInternal";
 import {NResponse} from "./modules/network/NResponse";
 import {NetLink} from "./modules/network/NetLink";
 import {NRequest} from "./modules/network/NRequest";
+import {Network} from "./modules/network/Network";
+import {Synchronicity} from "./modules/tools/Synchronicity";
 
 Promise.all([
     (async ()=>{let cr = new Test("Crypto");
@@ -132,22 +134,18 @@ Promise.all([
         return ct.run();
     })(), // chordioid
 
-    (async ()=>{let cr = new Test("Network");
-        (window as any).Network = Network;
+    (async ()=>{let cr = new Test("NetworkInternal");
+        (window as any).NetworkInternal = NetworkInternal;
         (window as any).NetworkAddress = NetworkAddress;
         (window as any).NResponse = NResponse;
 
-        let a = new Network((msg)=> new NResponse("a replies to "+msg.original, null));
-        let b = new Network((msg)=> new NResponse("b replies to "+msg.original, null));
-        let c = new Network((msg)=> new NResponse("c replies to "+msg.original, null));
+        let a = new NetworkInternal((msg)=> new NResponse("a replies to "+msg.original, null), new PrivateKey());
+        let b = new NetworkInternal((msg)=> new NResponse("b replies to "+msg.original, null), new PrivateKey());
+        let c = new NetworkInternal((msg)=> new NResponse("c replies to "+msg.original, null), new PrivateKey());
 
-        try {
 
-            cr.assert("network is empty", JSON.stringify(await a.broadcast("A broadcasts").catch(e => e)), JSON.stringify([1001]));
+        cr.assert("network is empty", JSON.stringify(a.broadcast("A broadcasts")), JSON.stringify([]));
 
-        }catch(e){
-            console.log(e);
-        }
         a.complete(await b.answer(await a.offer()));
         b.complete(await c.answer(await b.offer()));
         c.complete(await a.answer(await c.offer()));
@@ -163,7 +161,46 @@ Promise.all([
         cr.assert("network is empty", (await a.broadcast("A broadcasts")).length, 2);
 
         return cr.run();
-    })(), // Network
+    })(), // NetworkInternal
+
+    (async ()=>{let cr = new Test("Network");
+        (window as any).Network = Network;
+        (window as any).NetworkAddress = NetworkAddress;
+
+        class TestNet extends Network{
+            bcc;
+            constructor(){
+                let key = new PrivateKey();
+                super(key);
+                this.bcc = this.addBroadcastKernel<string>(async (msg)=>{
+                    console.log(await key.getPublicHash()+"says I RECEIVED THIS BROADCAST!: "+msg);
+                    return true;
+                })
+            }
+        }
+        (window as any).TestNet = TestNet;
+
+        let a = new TestNet();
+        let b = new TestNet();
+        let c = new TestNet();
+        let d = new TestNet();
+
+        a.complete(await b.answer(await a.offer()));
+        b.complete(await c.answer(await b.offer()));
+        c.complete(await a.answer(await c.offer()));
+        d.complete(await c.answer(await d.offer()));
+
+        await new Promise(a => setTimeout(()=>a(), 1000));
+
+        await a.ready;
+        await b.ready;
+        await c.ready;
+        await d.ready;
+
+        cr.assert("successful broadcast sent", (await d.bcc("D broadcasts")).length, 1);
+
+        return cr.run();
+    })(), // NetworkInternal
 
 
 ]).then(a => {

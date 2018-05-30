@@ -56,7 +56,8 @@ export class TransmissionControl extends DataLink{
                     }
                 }
             } catch (e) {
-                console.log("bad actor");
+                console.log("bad actor:");
+                console.error(e);
                 self.close();
             }
 

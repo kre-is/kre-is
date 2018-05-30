@@ -1,125 +1,108 @@
-import {TCAnswer, TCOffer, TransmissionControl} from "../transmissioncontrol/TransmissionControl";
-import {NResponse} from "./NResponse";
-import {NRequest} from "./NRequest";
+import {NetworkInternal} from "./NetworkInternal";
 import {NetworkAddress} from "./NetworkAddress";
-import {Arctable} from "./arctable/Arctable";
-import {NetLink} from "./NetLink";
-import {PrivateKey, RawDoc, VerDoc} from "../crypto/PrivateKey";
-import {Future} from "../tools/Future";
+import {NRequest} from "./NRequest";
+import {NResponse} from "./NResponse";
+import {PrivateKey, PublicKey, RawDoc, VerDoc} from "../crypto/PrivateKey";
+import {networkc} from "./config";
+import {Fasthash} from "../crypto/Fasthash";
 
-enum NetworkError{
-    NoParticipantFound = 1001,
-    ProtocolError = 1300,
-    HandshakeError1 = 1301,
-    HandshakeError2 = 1302
+export enum NetworkError{
+    NoSuchChannel = 2001,
+    RemoteApplicationError = 2002,
+    BroadcastFromFuture = 2101, // rejected because desynchronized.
 }
 
-export class Network{
-    links: Arctable<NetLink>;
-    pendingOffers : {link : NetLink, age : number}[] = [];
-    pendingAnswers: {link : NetLink, age : number}[] = [];
-    onmessage : (request : NRequest) => NResponse;
-    ready : Promise<Network>;
-    private key : PrivateKey;
+export class Network extends NetworkInternal{
+    private broadcastBuffer : {time : number, hash : number}[] = [];
+    private ports : RequestFunction<any, any>[] = [];
+    private timeOffset : number = 0;
 
-    constructor(onmessage : (request : NRequest) => NResponse, key ?: PrivateKey){
-        this.onmessage = onmessage;
-        this.key = key || new PrivateKey();
-        this.ready = new Future<Network>(); //fires when at least one connection is ready;
-        (async ()=>{
-            //guaranteed-ish to be ready on time because offer/answer awaits this.key
-            this.links = new Arctable<NetLink>(await this.key.getPublicHash());
-        })();
-
+    constructor(key ?: PrivateKey){
+        super(null, key || new PrivateKey());
+        this.onmessage = this.reflect;
     }
 
-    connect(link : NetLink){
+    /**
+     * @param {(arg: A, req?: NRequest) => Promise<B>} onmessage
+     * @returns {(arg: A) => (Promise<B> | Promise<B>[])}
+     */
+    protected addport<A,B>(onmessage : (arg : A, req ?: NRequest)=> Promise<B>): (arg : A, target ?: NetworkAddress) => Promise<B[]> | Promise<B>{
         let self = this;
-        link.ready.then(()=>(self.ready as Future<Network>).resolve(self));
-        let ejected = this.links.add(link.address.numeric ,link);
-        if(ejected) ejected.close();
-        return;
-    }
-    disconnect(link : NetLink){
-        this.links.remove(link.address.numeric).close();
-    }
+        let port : number = this.ports.length;
 
-
-    async relay(request : NRequest) : Promise<NResponse>{
-        await this.ready;
-        let outlink = this.links.approach(request.target.numeric);
-        if(!outlink) throw [NetworkError.NoParticipantFound];
-        return await outlink.dispatch(request);
-    }
-
-    async broadcast(request : string) : Promise<NResponse[]>{
-        if(!this.links ) throw [NetworkError.NoParticipantFound];
-        let all = this.links.getAll();
-        if(!all.length) throw [NetworkError.NoParticipantFound];
-        return await Promise.all(all.map(ol => ol.dispatch(new NRequest(ol.address, request))));
-    }
-
-    async offer() : Promise<NOffer>{
-        let self = this;
-        let link = new NetLink(this);
-        let time = new Date().getTime();
-
-        self.pendingOffers.push({link: link, age: time});
-
-        link.ready.then(()=>{
-            let element = self.pendingOffers.splice(
-                self.pendingOffers.findIndex(e => e.age == time),1)[0];
-            self.connect(link);
+        this.ports.push(async (msg : A, req ?: NRequest)=>{
+            return await onmessage(msg, req);
         });
-        //@todo: check if overfull, and disable further offers
 
-        return this.key.sign<{o: TCOffer, t: number}>({o: await link.offer(), t: time});
-    }
+        return async (arg : A, target ?: NetworkAddress) => {
 
-    async answer(offer : NOffer) : Promise<NAnswer>{
-        let self = this;
-        try{
-            let verdoc = await VerDoc.reconstruct<{o: TCOffer, t: number}>(offer);
+            let payload = port.toString(10) + '|' + JSON.stringify(arg);
 
-            let link = new NetLink(self);
-            let answer = await link.answer(verdoc.data.o);
-            let time = new Date().getTime();
-            self.pendingAnswers.push({age: time, link: link});
+            if(target){
+                return self.relay(new NRequest(target, payload)).then(r => JSON.parse(r.original))
+            }
 
-            link.setAddress(new NetworkAddress(verdoc.key.hashed()));
-
-            link.ready.then(()=>{
-                let element = self.pendingAnswers.splice(
-                    self.pendingAnswers.findIndex(e => e.age == time),1)[0];
-                self.connect(link);
-            });
-
-            //@todo: delete oldest answers on overfull
-
-            return this.key.sign<{a : TCAnswer, t: number}>({a : answer, t: verdoc.data.t});
-        }catch(e){
-            throw [NetworkError.HandshakeError1];
+            //no target, will broadcast
+            return (await self.broadcast(payload)).map(p => p.then(e => JSON.parse(e.original)));
         }
     }
 
-    async complete(answer : NAnswer){
+
+    /**
+     * @param {(msg: A) => boolean} onmessage operation. boolean response determines whether to rebroadcast the message
+     * @param {number} port
+     * @returns {(msg: A) => void}
+     */
+    addBroadcastKernel<A>(onmessage : (msg: A)=>Promise<boolean>, port ?: number) : (msg : A) => Promise<void>{
         let self = this;
+        let channel;
+        let responder = async (msg : RawDoc<BroadcastFrame<A>>) => {
+            let vbcc = await VerDoc.reconstruct(msg);
+            let hash = Fasthash.string(vbcc.signature);
+            if(vbcc.data.time > new Date().getTime() + self.timeOffset + networkc.maxBroadcastTolerance) // network sent from the future
+                throw[NetworkError.BroadcastFromFuture];
+            if(
+                !self.broadcastBuffer[networkc.maxBroadcastBuffer] || // buffer isn't full yet, or
+                (self.broadcastBuffer[networkc.maxBroadcastBuffer].time < vbcc.data.time //not too old and
+                && self.broadcastBuffer.findIndex(e => e.hash == hash) == -1 )//not already in buffer
+            ){
+                if(await onmessage(vbcc.data.data)){
+                    self.broadcastBuffer.unshift({time: vbcc.data.time, hash: hash});
+                    if(self.broadcastBuffer.length > networkc.maxBroadcastBuffer) self.broadcastBuffer.pop();
+                    channel(msg);
+                    return true;
+                }
+            }
+            return false;
+        };
+        channel = this.addport<RawDoc<BroadcastFrame<A>>, boolean>(responder);
+        return async (msg : A)=>{
+            let frame : BroadcastFrame<A>= {
+                data : msg,
+                time : new Date().getTime() + self.timeOffset,
+            };
+            return channel(await self.key.sign(frame));
+        }
+    }
+
+
+    private reflect(msg: NRequest){
+        let splitr = msg.original.indexOf('|');
+        let port = parseInt(msg.original.slice(0, splitr));
+        let meat = msg.original.slice(splitr+1);
+        if(!this.ports[port]) throw NetworkError.NoSuchChannel;
         try{
-            let verdoc = await VerDoc.reconstruct<{a : TCAnswer, t: number}>(answer);
-
-
-            let link = this.pendingOffers[
-                    this.pendingOffers.findIndex(o => o.age == verdoc.data.t)
-                ].link;
-            link.complete(verdoc.data.a);
-
-            link.setAddress(new NetworkAddress(verdoc.key.hashed()));
+            return new NResponse(JSON.stringify(this.ports[port](JSON.parse(meat), msg)));
         }catch(e){
-            throw [NetworkError.HandshakeError2];
+            throw [NetworkError.RemoteApplicationError, ...e]
         }
     }
 
 }
-
-class NOffer extends RawDoc<{o: TCOffer, t: number}>{}
-class NAnswer extends RawDoc<{a : TCAnswer, t: number}>{}
+export interface RequestFunction<RequestT, ResponseT>{
+    (request :RequestT, req ?: NRequest) : Promise<ResponseT>
+}
+interface BroadcastFrame<T>{
+    data : T;
+    time : number;
+}

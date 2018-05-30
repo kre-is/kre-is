@@ -1,1 +1,5 @@
-1000 range: Network
+# Network Error Ranges
+
+## 1XXX NetworkInternal
+
+## 2XXX Network

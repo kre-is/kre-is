@@ -29,6 +29,6 @@ export class Test{
         this.item = 0;
         this.passed = 0;
         await Promise.all(this.tests.map(e => e()));
-        console.log(((this.passed == this.tests.length)? "Passed " : "FAILED! (")+this.passed+"/"+this.tests.length+"). in "+this.name+".");
+        console.log(((this.passed == this.tests.length)? "Passed (" : "FAILED! (")+this.passed+"/"+this.tests.length+"). in "+this.name+".");
     }
 }

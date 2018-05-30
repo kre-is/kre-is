@@ -1,12 +1,12 @@
 import {TransmissionControl} from "../transmissioncontrol/TransmissionControl";
-import {Network} from "./Network";
+import {NetworkInternal} from "./NetworkInternal";
 import {NRequest} from "./NRequest";
 import {NetworkAddress} from "./NetworkAddress";
 import {NResponse} from "./NResponse";
 
 export class NetLink extends TransmissionControl{
     address : NetworkAddress = null;
-    constructor(network : Network) {
+    constructor(network : NetworkInternal) {
         super(async reqstr => {
             let splitr = reqstr.indexOf('|');
             let address = parseFloat(reqstr.slice(0, splitr));
