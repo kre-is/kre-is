@@ -49,12 +49,14 @@ export class PrivateKey {
         let uft =  new Uint8Array(sigbuffer);
         let chec2 = new Uint8Array(sigbuffer).reduce((a,c,i)=>a+c*i,0);
 
-
-        let vd = new VerDoc<T>( header+puk+data+String.fromCodePoint(...new Uint8Array(sigbuffer)));
-
+        let vd = new VerDoc<T>();
+        vd.original = header+puk+data+String.fromCodePoint(...new Uint8Array(sigbuffer));
         vd.key = this.publicKey;
         vd.data = obj;
         vd.signature = JSON.stringify(new Uint8Array(sigbuffer));
+
+        let ku = utf8Encoder.encode(vd.original);
+
 
         return vd;
     }
@@ -68,23 +70,24 @@ export class PrivateKey {
 /**
  * VerDoc DAO
  */
-export class RawDoc<T> extends String{
-
+export class RawDoc<T>{
+    original : string;
 }
+
 
 export class VerDoc<T> extends RawDoc<T>{
     data: T;
     key: PublicKey;
     signature: string;
     static async reconstruct<T>(rawDoc : RawDoc<T>) : Promise<VerDoc<T>>{
-        let version = rawDoc.codePointAt(0);
+        let version = rawDoc.original.codePointAt(0);
 
         switch (version){
             case 2: {
-                let header = rawDoc.substring(0,3);
-                let puk = rawDoc.substr(3, rawDoc.codePointAt(1));
-                let data = rawDoc.substr(3 + rawDoc.codePointAt(1), rawDoc.codePointAt(2));
-                let sig = rawDoc.substr(3 + rawDoc.codePointAt(1) + rawDoc.codePointAt(2));
+                let header = rawDoc.original.substring(0,3);
+                let puk = rawDoc.original.substr(3, rawDoc.original.codePointAt(1));
+                let data = rawDoc.original.substr(3 + rawDoc.original.codePointAt(1), rawDoc.original.codePointAt(2));
+                let sig = rawDoc.original.substr(3 + rawDoc.original.codePointAt(1) + rawDoc.original.codePointAt(2));
 
                 let key = await new PublicKey(
                     JSON.parse(
@@ -99,10 +102,11 @@ export class VerDoc<T> extends RawDoc<T>{
                 if(
                     await key.verify(utf8Encoder.encode(header+puk+data), new Uint8Array(sig.split('').map(c => c.codePointAt(0))))
                 ){
-                    let vd = new VerDoc<T>(rawDoc);
+                    let vd = new VerDoc<T>();
                     vd.signature = sig;
                     vd.key = key;
                     vd.data = JSON.parse(data);
+                    vd.original = rawDoc.original;
                     return vd;
                 }
 

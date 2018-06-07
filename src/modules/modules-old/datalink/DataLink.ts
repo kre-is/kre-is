@@ -1,4 +1,4 @@
-import {datalinkc} from "../modules-old/datalink/config";
+import {datalinkc} from "./config";
 
 export class DataLink extends RTCPeerConnection{
     protected datachannel : RTCDataChannel;
