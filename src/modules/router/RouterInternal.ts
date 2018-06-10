@@ -1,10 +1,10 @@
 import {Cable} from "./Cable";
-import {Arctable} from "./arctable/Arctable";
+import {ArctableObservable} from "./arctable/ArctableObservable";
 import {Future} from "../tools/Future";
 
 
 export abstract class RouterInternal {
-    protected table : Arctable<Cable>;
+    protected table : ArctableObservable<Cable>;
     readonly ready : Promise<this>;
 
     protected constructor(){
@@ -21,7 +21,7 @@ export abstract class RouterInternal {
         return this.table.getAll().map(c => c.send(msg));
     }
 
-    attach(cable : Cable){
+    protected attach(cable : Cable){
         let self = this;
         cable.closed.then(c => self.detach(c));
         let ejected = this.table.add(cable.key.hashed(), cable);
@@ -29,7 +29,7 @@ export abstract class RouterInternal {
         (this.ready as Future<this>).resolve(this);
     }
 
-    detach(cable : Cable){
+    protected detach(cable : Cable){
         let ejected = this.table.remove(cable.key.hashed());
         ejected && ejected.close();
     }

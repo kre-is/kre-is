@@ -10,8 +10,9 @@ export class DataLink extends RTCPeerConnection{
         this.datachannel = (this as any)
             .createDataChannel("data", {negotiated: true, id: 0, ordered: false});
 
-        this.ready = new Promise<this>( resolve => this.datachannel.onopen = ()=> resolve());
-        this.closed = new Promise<this>( resolve => this.datachannel.onclose = ()=> resolve());
+        let self = this;
+        this.ready = new Promise<this>( resolve => this.datachannel.onopen = ()=> resolve(self));
+        this.closed = new Promise<this>( resolve => this.datachannel.onclose = ()=> resolve(self));
 
         this.datachannel.onmessage = onmessage;
     }

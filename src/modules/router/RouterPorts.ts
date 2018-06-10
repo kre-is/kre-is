@@ -30,10 +30,9 @@ export abstract class RouterPorts extends RouterInternal{
     /**
      * communicates with all adjacent nodes.
      * @param {OnMessage} onmessage
-     * @param maxBroadcastBuffer
      * @returns {OnMessage}
      */
-    createFrequency(onmessage : OnMessage, maxBroadcastBuffer) : (msg : string) => Promise<String>[]{
+    createFrequency(onmessage : OnMessage) : (msg : string) => Promise<String>[]{
         let portID = this.channels.length;
         this.channels.push(onmessage);
 

@@ -2,13 +2,13 @@ import {RouterPorts} from "./RouterPorts";
 import {Cable, CableAnswer, CableOffer, RawCableOffer} from "./Cable";
 import {Arctable} from "./arctable/Arctable";
 import {PrivateKey, RawDoc, VerDoc} from "../crypto/PrivateKey";
-import has = Reflect.has;
 import {Answer} from "../datalink/DataLink";
+import {ArctableObservable} from "./arctable/ArctableObservable";
 
-export class RouterChordFactory extends RouterPorts{
+export class RouterCableFactory extends RouterPorts{
     readonly address : Promise<number>;
     readonly sign : <T>(doc : T)=>Promise<RawDoc<T>>;
-    private relayOffer: (msg: string, target: number, tolerance: number) => Promise<String>;
+    protected relayOffer: (msg: string, target: number, tolerance: number) => Promise<String>;
     constructor(key : PrivateKey){
         super();
 
@@ -21,16 +21,17 @@ export class RouterChordFactory extends RouterPorts{
 
         this.address = key.getPublicHash();
 
-        this.address.then(hash => self.table = new Arctable<Cable>(hash))
+        this.address.then(hash => self.table = new ArctableObservable<Cable>(hash))
     }
 
 
     /**
      *
      * @param {Connector} connector
+     * @param {number} entropy alters the priority of suggested future connections. keep this near 0, and between 0 and 1.
      * @returns {Promise<Cable>} when ready for transmit
      */
-    async generateSocket(connector : Connector){
+    async generateSocket(connector : Connector, offset = 0){
 
         await this.address;
 
@@ -38,12 +39,10 @@ export class RouterChordFactory extends RouterPorts{
 
         let cable = new Cable();
 
-        let suggestion = this.table.getSuggestions()[0];
+        let suggestion = this.table.getSuggestions()[
+                offset
+            ];
 
-        // @todo: investigate the utility of this
-        // let suggestion =  this.table.getSuggestions()[
-        //     Math.floor(Math.random()**10 * this.table.maxSize)
-        //     ];
 
         let offer = await this.sign({
             target: suggestion.exponent,

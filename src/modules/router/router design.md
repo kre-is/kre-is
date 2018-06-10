@@ -1,5 +1,7 @@
 # Router LayerCake
 
+generate yourself a diagram for the directory for more info.
+
 (bottom to top)
 1) **RouterInternal** : message routing
 2) **RouterPorts** : make application ports

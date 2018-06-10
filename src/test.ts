@@ -4,7 +4,10 @@ import {DataLink} from "./modules/datalink/DataLink";
 import {TransmissionControl} from "./modules/transmissioncontrol/TransmissionControl";
 import {RouterPorts} from "./modules/router/RouterPorts";
 import {Cable} from "./modules/router/Cable";
-import {RouterChordFactory} from "./modules/router/RouterChordFactory";
+import {RouterCableFactory} from "./modules/router/RouterCableFactory";
+import {RouterDamned} from "./modules/router/RouterDamned";
+import {sleep} from "./modules/tools/sleep";
+import {Router} from "./modules/router/Router";
 
 
 Promise.all([
@@ -83,25 +86,26 @@ Promise.all([
         let bk = new PrivateKey();
         let ck = new PrivateKey();
 
-        let a = new RouterChordFactory(ak);
+        let a = new RouterCableFactory(ak);
         let as1 = (a as any).createPort(async (msg) =>"a1 reflects: "+msg);
         let as2 = (a as any).createPort(async (msg) =>"a2 reflects: "+msg);
         let asb = (a as any).createFrequency(async (msg) =>"ab reflects: "+msg);
-        let b = new RouterChordFactory(bk);
+        let b = new RouterCableFactory(bk);
         let bs1 = (b as any).createPort(async (msg) =>"b1 reflects: "+msg);
         let bs2 = (b as any).createPort(async (msg) =>"b2 reflects: "+msg);
         let bsb = (b as any).createFrequency(async (msg) =>"bb reflects: "+msg);
-        let c = new RouterChordFactory(ck);
+        let c = new RouterCableFactory(ck);
         let cs1 = (c as any).createPort(async (msg) =>"c1 reflects: "+msg);
         let cs2 = (c as any).createPort(async (msg) =>"c2 reflects: "+msg);
         let csb = (c as any).createFrequency(async (msg) =>"cb reflects: "+msg);
 
         a.generateSocket(b.provideConnector());
-        c.generateSocket(a.provideConnector());
 
         await a.ready;
 
         cr.assert("channel test 1", await as1("as1", 0.5, 1), "b1 reflects: as1");
+
+        await c.generateSocket(a.provideConnector());
 
         await b.ready;
 
@@ -119,6 +123,93 @@ Promise.all([
 
         return cr.run();
     })(), // Router Ports
+
+    (async ()=>{let cr = new Test("Router Daemon");
+
+        class RouterTest extends RouterDamned{
+            b1: (msg: string) => Promise<String>[];
+            c1: (msg: string, target: number, tolerance: number) => Promise<String>;
+            c2: (msg: string, target: number, tolerance: number) => Promise<String>;
+            constructor(name : string){
+                super(new PrivateKey());
+
+                this.c1 = this.createPort(async (msg) =>name+"c1 reflects: "+msg);
+                this.c2 = this.createPort(async (msg) =>name+"c2 reflects: "+msg);
+                this.b1 = this.createFrequency(async (msg) =>name+"b1 reflects: "+msg);
+            }
+        }
+
+        let a = new RouterTest("a");
+        let b = new RouterTest("b");
+        let c = new RouterTest("c");
+        let d = new RouterTest("d");
+        let e = new RouterTest("e");
+
+        a.generateSocket(b.provideConnector());
+        b.generateSocket(c.provideConnector());
+        c.generateSocket(d.provideConnector());
+        d.generateSocket(e.provideConnector());
+
+        await a.ready;
+        await b.ready;
+        await c.ready;
+        await d.ready;
+        await e.ready;
+
+        await sleep(5000);
+
+
+        cr.assert("daemon test 1", JSON.stringify(
+            (await Promise.all(a.b1("asb")))
+                .sort((a,b) => (a as string).localeCompare(b as string))),
+            JSON.stringify([ 'bb reflects: asb', 'cb reflects: asb' ])
+        );
+
+        // (window as any).a = a;
+        // (window as any ).b = b;
+        // (window as any ).c = c;
+
+
+        return cr.run();
+    })(), // Router Daemon
+
+
+    (async ()=>{let cr = new Test("Router");
+
+        class RouterTest extends Router{
+            b1: (msg: string) => void;
+            constructor(name : string){
+                super(new PrivateKey());
+                this.b1 = this.createBroadcastChannel(msg => console.log(msg));
+            }
+        }
+
+        let a = new RouterTest("a");
+        let b = new RouterTest("b");
+        let c = new RouterTest("c");
+        let d = new RouterTest("d");
+        let e = new RouterTest("e");
+
+        a.generateSocket(b.provideConnector());
+        b.generateSocket(c.provideConnector());
+        c.generateSocket(d.provideConnector());
+        d.generateSocket(e.provideConnector());
+
+        await a.ready;
+        await b.ready;
+        await c.ready;
+        await d.ready;
+        await e.ready;
+
+        await sleep(5000);
+
+        (window as any).a = a;
+        (window as any ).b = b;
+        (window as any ).c = c;
+
+
+        return cr.run();
+    })(), // Router
 
 
 ]).then(a => {
